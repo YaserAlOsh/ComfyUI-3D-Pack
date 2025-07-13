@@ -1,5 +1,6 @@
 import os
 import gc
+import sys
 import math
 import copy
 from enum import Enum
@@ -123,6 +124,7 @@ from Gen_3D_Modules.Hunyuan3D_2_1 import (
     create_glb_with_pbr_materials_2_1,
 )
 from Gen_3D_Modules.Hunyuan3D_2_1.hy3dpaint.utils.torchvision_fix import apply_fix
+from Gen_3D_Modules.Direct3D_S2.direct3d_s2.pipeline import Direct3DS2Pipeline
 apply_fix()
 
 
@@ -5572,3 +5574,120 @@ class Hunyuan3D_21_TexGen:
                 except:
                     pass
 
+class Load_Direct3D_S2_Pipeline:
+    checkpoints_dir = "Direct3D_S2"
+    default_repo_id = "wushuang98/Direct3D-S2"
+    subfolder = "direct3d-s2-v-1-1"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        cls.checkpoints_dir_abs = os.path.join(CKPT_ROOT_PATH, cls.checkpoints_dir)
+        return {
+            "required": {
+                "force_download": ("BOOLEAN", {"default": False}),
+            }
+        }
+    
+    RETURN_TYPES = ("D3DS2_PIPE",)
+    RETURN_NAMES = ("d3ds2_pipe",)
+    FUNCTION = "load_pipeline"
+    CATEGORY = "Comfy3D/Import|Export"
+
+    direct3d_s2_project_root = os.path.join(
+    os.path.dirname(__file__), 
+        'Gen_3D_Modules', 
+        'Direct3D_S2' 
+    )
+
+    if direct3d_s2_project_root not in sys.path:
+        sys.path.insert(0, direct3d_s2_project_root)
+    def load_pipeline(self, force_download):
+        """Loads the Direct3D-S2 pipeline from a checkpoint, downloading if necessary."""
+        pipeline_path = os.path.join(self.checkpoints_dir_abs, self.subfolder)
+        
+        # Ensure checkpoint directory exists
+        if not os.path.exists(self.checkpoints_dir_abs):
+            os.makedirs(self.checkpoints_dir_abs)
+            cstr(f"[{self.__class__.__name__}] Created checkpoint directory: {self.checkpoints_dir_abs}").msg.print()
+        
+        # Download model if not present or forced
+        if force_download or not os.path.exists(os.path.join(pipeline_path, 'config.yaml')):
+            cstr(f"[{self.__class__.__name__}] Downloading Direct3D-S2 models to: {self.checkpoints_dir_abs}").msg.print()
+            snapshot_download(
+                repo_id=self.default_repo_id,
+                local_dir=self.checkpoints_dir_abs,
+                force_download=force_download,
+                repo_type="model"
+            )
+        
+        # Validate downloaded files
+        if not os.path.exists(os.path.join(pipeline_path, 'config.yaml')):
+            cstr(f"[{self.__class__.__name__}] Failed to download or locate config.yaml in {pipeline_path}").error.print()
+            raise FileNotFoundError(f"Config file not found in {pipeline_path}")
+        
+        # Instantiate the pipeline
+        pipe = Direct3DS2Pipeline.from_pretrained(
+            pipeline_path,
+            subfolder=self.subfolder
+        )
+        pipe.to(DEVICE)
+        
+        cstr(f"[{self.__class__.__name__}] Loaded Direct3D-S2 pipeline successfully.").msg.print()
+        
+        return (pipe,)
+class Direct3D_S2_Generator:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "d3ds2_pipe": ("D3DS2_PIPE",),
+                "reference_image": ("IMAGE",),
+                "sdf_resolution": ([512, 1024], {"default": 1024}),
+                "mc_threshold": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "remesh": ("BOOLEAN", {"default": False}),
+                "simplify_ratio": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.01}),
+                "remove_interior": ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = ("MESH",)
+    RETURN_NAMES = ("mesh",)
+    FUNCTION = "run_d3ds2"
+    CATEGORY = "Comfy3D/Algorithm"
+
+    @torch.no_grad()
+    def run_d3ds2(self, d3ds2_pipe, reference_image, sdf_resolution, mc_threshold, remesh, simplify_ratio, remove_interior):
+        """Generates a 3D mesh from an input image using the Direct3D-S2 pipeline."""
+        # Validate input image
+        if not isinstance(reference_image, torch.Tensor) or reference_image.shape[0] == 0:
+            cstr(f"[{self.__class__.__name__}] 'reference_image' must be a non-empty torch.Tensor").error.print()
+            raise ValueError("Invalid reference_image: must be a non-empty torch.Tensor")
+        
+        # Ensure image is on the correct device
+        reference_image = reference_image.to(DEVICE)
+        print(reference_image)
+        # Convert input image to PIL
+        single_image = torch_imgs_to_pils(reference_image)[0]
+        print(single_image)
+        # Run the pipeline
+        try:
+            outputs = d3ds2_pipe(
+                single_image,
+                sdf_resolution=sdf_resolution,
+                mc_threshold=mc_threshold,
+                remesh=remesh,
+                simplify_ratio=simplify_ratio,
+                remove_interior=remove_interior
+            )
+            print(outputs)
+        except Exception as e:
+            cstr(f"[{self.__class__.__name__}] Failed to run Direct3D-S2 pipeline: {str(e)}").error.print()
+            raise
+
+        trimesh_object = outputs["mesh"]
+        
+        # Convert to standard Mesh object
+        mesh_out = Mesh.load_trimesh(given_mesh=trimesh_object)
+        mesh_out.auto_normal()
+        
+        return (mesh_out,)

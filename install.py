@@ -108,10 +108,37 @@ try:
             
         return build_succeed
     
+    def compile_custom_extension(extension_dir, extension_name):
+        print(f"Attempting to compile custom extension: {extension_name}")
+        try:
+            env = os.environ.copy()
+            env['DISTUTILS_USE_SDK'] = '1' # Windows compilation
+            python_exe = sys.executable
+            # Change directory to run setup.py
+            original_dir = os.getcwd()
+            os.chdir(extension_dir)
+            subprocess.run(
+                [python_exe, "setup.py", "install"], 
+                env=env, 
+                check=True, 
+                capture_output=True, 
+                text=True
+            )
+            print(f"Successfully compiled {extension_name}.")
+            os.chdir(original_dir) # Go back to the original directory
+        except Exception as e:
+            print(f"WARNING: Could not compile custom extension {extension_name}.")
+            print(f"This may cause issues if you use nodes that depend on it.")
+            print(f"Error: {e}")
+            os.chdir(original_dir) # Ensure we go back even if it fails
     # Install packages that needs specify remote url
     install_remote_packages(build_config.build_base_packages)
     install_platform_packages()
-    
+    voxelize_path = os.path.join(os.path.dirname(__file__), "third_party", "voxelize")
+    if os.path.exists(voxelize_path):
+        compile_custom_extension(voxelize_path, "udf_ext")
+    else:
+        print("Voxelize extension for Direct3D_S2 not found, skipping compilation.")
     # Check and install build tools if needed
     cstr("Checking build tools...").msg.print()
     build_tools = ["ninja", "cmake", "setuptools", "wheel"]
