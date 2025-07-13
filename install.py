@@ -134,7 +134,7 @@ try:
     # Install packages that needs specify remote url
     install_remote_packages(build_config.build_base_packages)
     install_platform_packages()
-    voxelize_path = os.path.join(os.path.dirname(__file__), "third_party", "voxelize")
+    voxelize_path = os.path.join(os.path.dirname(__file__), "Gen_3D_Modules","Direct3D_S2","third_party", "voxelize")
     if os.path.exists(voxelize_path):
         compile_custom_extension(voxelize_path, "udf_ext")
     else:
